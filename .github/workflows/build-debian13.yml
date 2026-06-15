@@ -1,0 +1,99 @@
+name: 🌀 Build Debian 13 Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: '内核版本 (如 7.1)'
+        required: true
+        default: '7.1'
+      desktop_env:
+        description: '选择桌面环境'
+        required: true
+        type: choice
+        options: [all, gnome, kde]
+        default: 'all'
+      boot_mode:
+        description: '选择启动模式'
+        required: true
+        type: choice
+        options: [all, dual, single]
+        default: 'all'
+      username:
+        description: '自定义系统用户名'
+        required: true
+        type: string
+        default: 'xiaomi'
+      password:
+        description: '自定义密码'
+        required: true
+        type: string
+        default: '123456'
+      skip_release:
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
+      matrix_desktop: ${{ steps.set-matrix.outputs.desktop }}
+      matrix_boot: ${{ steps.set-matrix.outputs.boot }}
+    steps:
+      - id: tag
+        run: echo "release_tag=debian13-${{ github.event.inputs.desktop_env || 'all' }}-$(date -u '+%Y%m%d')-${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+      - id: set-matrix
+        run: |
+          DESKTOP="${{ github.event.inputs.desktop_env || 'all' }}"
+          [ "$DESKTOP" == "all" ] && echo 'desktop=["gnome", "kde"]' >> $GITHUB_OUTPUT || echo "desktop=[\"$DESKTOP\"]" >> $GITHUB_OUTPUT
+          BOOT="${{ github.event.inputs.boot_mode || 'all' }}"
+          [ "$BOOT" == "all" ] && echo 'boot=["dual", "single"]' >> $GITHUB_OUTPUT || echo "boot=[\"$BOOT\"]" >> $GITHUB_OUTPUT
+      - name: Create GitHub Release
+        if: ${{ !github.event.inputs.skip_release }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          name: "Debian 13 Desktop - ${{ steps.tag.outputs.release_tag }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-debian:
+    runs-on: ubuntu-24.04-arm
+    needs: prepare-release
+    strategy:
+      fail-fast: false 
+      matrix:
+        desktop: ${{ fromJSON(needs.prepare-release.outputs.matrix_desktop) }}
+        boot: ${{ fromJSON(needs.prepare-release.outputs.matrix_boot) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt update && sudo apt install -y debootstrap libarchive-tools p7zip-full curl wget android-sdk-libsparse-utils
+      - name: Download kernel bundle from Main Repo
+        run: |
+          gh release download "kernel-bundle-${{ github.event.inputs.kernel_version || '7.1' }}" \
+            --pattern "*.deb" --repo "code002-2/Xiaomi-pad-6s-pro-Linux" --clobber || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build RootFS
+        id: build
+        run: |
+          chmod +x sheng-rootfs_build.sh
+          sudo bash sheng-rootfs_build.sh debian-desktop "${{ github.event.inputs.kernel_version || '7.1' }}" "${{ matrix.boot }}" "${{ matrix.desktop }}" "${{ github.event.inputs.username || 'xiaomi' }}" "${{ github.event.inputs.password || '123456' }}"
+          echo "pkg_count=$(ls -1 *.7z 2>/dev/null | wc -l)" >> $GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-${{ matrix.desktop }}-${{ matrix.boot }}
+          path: "*.7z"
+          retention-days: 7
+      - name: Upload to Release
+        if: ${{ !github.event.inputs.skip_release && steps.build.outputs.pkg_count > 0 }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.release_tag }}
+          files: "*.7z"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

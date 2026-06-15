@@ -1,0 +1,99 @@
+name: 🐧 Build Ubuntu 26.04 Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: '内核版本 (如 7.1)'
+        required: true
+        default: '7.1'
+      username:
+        description: '自定义系统用户名 (必须是小写字母)'
+        required: true
+        type: string
+        default: 'xiaomi'
+      password:
+        description: '自定义密码 (User 和 Root 统一密码)'
+        required: true
+        type: string
+        default: '123456'
+      skip_release:
+        description: '跳过创建GitHub Release'
+        type: boolean
+        default: false
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
+    steps:
+      - name: Generate release tag
+        id: tag
+        run: echo "release_tag=ubuntu26-$(date -u '+%Y%m%d')-${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+      - name: Create GitHub Release
+        if: ${{ !github.event.inputs.skip_release }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          name: "Ubuntu 26.04 Desktop - ${{ steps.tag.outputs.release_tag }}"
+          body: "Ubuntu 26.04 LTS | User: `${{ github.event.inputs.username || 'xiaomi' }}` Pass: `${{ github.event.inputs.password || '123456' }}`"
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-desktop:
+    name: Build Ubuntu 26.04 (${{ matrix.desktop_env }})
+    runs-on: ubuntu-24.04-arm
+    needs: prepare-release
+    strategy:
+      matrix:
+        desktop_env: [gnome, kde, xfce]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install build tools
+        run: sudo apt update && sudo apt install -y debootstrap libarchive-tools p7zip-full curl wget android-sdk-libsparse-utils
+
+      - name: Download kernel bundle from Main Repo
+        run: |
+          KERNEL_VER="${{ github.event.inputs.kernel_version || '7.1' }}"
+          gh release download "kernel-bundle-${KERNEL_VER}" \
+            --pattern "*.deb" --repo "code002-2/Xiaomi-pad-6s-pro-Linux" --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build RootFS
+        id: build
+        run: |
+          KERNEL_VER="${{ github.event.inputs.kernel_version || '7.1' }}"
+          USERNAME="${{ github.event.inputs.username || 'xiaomi' }}"
+          PASSWORD="${{ github.event.inputs.password || '123456' }}"
+          
+          chmod +x build-ubuntu26-rootfs.sh
+          sudo ./build-ubuntu26-rootfs.sh "${KERNEL_VER}" "${{ matrix.desktop_env }}" "${USERNAME}" "${PASSWORD}"
+          
+          SEVEN_Z_FILE=$(ls ubuntu26_${{ matrix.desktop_env }}_*.7z | head -1)
+          echo "path=$SEVEN_Z_FILE" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu26-${{ matrix.desktop_env }}
+          path: ${{ steps.build.outputs.path }}
+          retention-days: 7
+
+      - name: Upload to Release
+        if: ${{ !github.event.inputs.skip_release }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.release_tag }}
+          files: ${{ steps.build.outputs.path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

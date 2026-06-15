@@ -1,0 +1,50 @@
+name: 🌀 Build Fedora Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        required: true
+        default: '7.1'
+      desktop_env:
+        type: choice
+        options: [gnome, kde]
+        default: 'gnome'
+      username:
+        required: true
+        default: 'xiaomi'
+      password:
+        required: true
+        default: '123456'
+      skip_release:
+        type: boolean
+        default: false
+
+permissions: { contents: write }
+
+jobs:
+  build-fedora:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt update && sudo apt install -y libarchive-tools p7zip-full curl wget android-sdk-libsparse-utils
+      - name: Download from Main Repo
+        run: |
+          gh release download "kernel-bundle-${{ github.event.inputs.kernel_version || '7.1' }}" --repo "code002-2/Xiaomi-pad-6s-pro-Linux" --clobber || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build RootFS
+        run: |
+          chmod +x sheng-fedora-rootfs_build.sh
+          sudo ./sheng-fedora-rootfs_build.sh fedora "${{ github.event.inputs.kernel_version || '7.1' }}" "${{ github.event.inputs.desktop_env || 'gnome' }}" "${{ github.event.inputs.username || 'xiaomi' }}" "${{ github.event.inputs.password || '123456' }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fedora-desktop
+          path: "*.7z"
+      - uses: softprops/action-gh-release@v1
+        if: ${{ !github.event.inputs.skip_release }}
+        with:
+          tag_name: fedora-$(date -u '+%Y%m%d')-${GITHUB_SHA::8}
+          files: "*.7z"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
