@@ -4,24 +4,25 @@ on:
   workflow_dispatch:
     inputs:
       kernel_version:
-        description: '内核版本 (如 7.1)'
+        description: '内核版本'
         required: true
         default: '7.1'
       desktop_env:
-        description: '桌面环境'
         type: choice
         options: [gnome, kde, xfce]
         default: 'gnome'
+      boot_mode:
+        description: '启动模式 (单/双系统)'
+        type: choice
+        options: [dual, single]
+        default: 'dual'
       username:
-        description: '自定义系统用户名 (必须是小写字母)'
         required: true
         default: 'xiaomi'
       password:
-        description: '自定义密码 (User 和 Root 统一密码)'
         required: true
         default: '123456'
       skip_release:
-        description: '跳过创建 GitHub Release'
         type: boolean
         default: false
 
@@ -32,13 +33,26 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install build tools
-        run: sudo apt update && sudo apt install -y libarchive-tools p7zip-full curl wget android-sdk-libsparse-utils
-      
+      - run: sudo apt update && sudo apt install -y libarchive-tools p7zip-full curl wget android-sdk-libsparse-utils
       - name: Download Native Fedora Packages
         run: |
           gh release download "kernel-bundle-${{ github.event.inputs.kernel_version || '7.1' }}" --pattern "*.rpm" --repo "code002-2/Xiaomi-pad-6s-pro-Linux" --clobber || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build RootFS
+        run: |
+          chmod +x sheng-fedora-rootfs_build.sh
+          # 追加了 boot_mode 参数
+          sudo ./sheng-fedora-rootfs_build.sh fedora "${{ github.event.inputs.kernel_version || '7.1' }}" "${{ github.event.inputs.desktop_env || 'gnome' }}" "${{ github.event.inputs.username || 'xiaomi' }}" "${{ github.event.inputs.password || '123456' }}" "${{ github.event.inputs.boot_mode || 'dual' }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fedora-${{ github.event.inputs.desktop_env }}-${{ github.event.inputs.boot_mode }}
+          path: "*.7z"
+      - uses: softprops/action-gh-release@v1
+        if: ${{ !github.event.inputs.skip_release }}
+        with:
+          tag_name: fedora-${{ github.event.inputs.desktop_env }}-${{ github.event.inputs.boot_mode }}-$(date -u '+%Y%m%d')-${GITHUB_SHA::8}
+          files: "*.7z"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
