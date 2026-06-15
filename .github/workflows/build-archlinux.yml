@@ -39,7 +39,7 @@ jobs:
       - run: sudo apt update && sudo apt install -y libarchive-tools p7zip-full curl wget android-sdk-libsparse-utils
       - name: Download Native Arch Packages
         run: |
-          gh release download "kernel-bundle-${{ github.event.inputs.kernel_version || '7.1' }}" --pattern "*.pkg.tar.zst" --repo "code002-2/Xiaomi-pad-6s-pro-Linux" --clobber || true
+          gh release download "kernel-bundle-${{ github.event.inputs.kernel_version || '7.1' }}" --pattern "*.pkg.tar.zst" --repo "code002-2/sheng-linux-build" --clobber || true
           wget -q -O mesa-common-dev_26.0.7-1_arm64.deb "http://ftp.br.debian.org/debian/pool/main/m/mesa/mesa-common-dev_26.0.8-1_arm64.deb"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
