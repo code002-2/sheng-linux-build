@@ -8,7 +8,7 @@ UBUNTU_SUITE="resolute"
 UBUNTU_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports"
 
 if [ $# -lt 2 ]; then
-    echo "用法: $0 <kernel_version> <desktop_environment> [username] [password]"
+    echo "用法: $0 <kernel_version> <desktop_environment> [username] [password] [boot_mode]"
     exit 1
 fi
 if [ "$(id -u)" -ne 0 ]; then exit 1; fi
@@ -17,11 +17,21 @@ KERNEL=$1
 DESKTOP_ENV=$2
 CUSTOM_USER=${3:-xiaomi}
 CUSTOM_PASS=${4:-123456}
+BOOT_MODE=${5:-dual}
+
+# 解析单双系统启动模式
+if [ "$BOOT_MODE" = "single" ]; then
+    ROOT_PART="userdata"
+    IMG_SUFFIX="singleboot"
+else
+    ROOT_PART="linux"
+    IMG_SUFFIX="dualboot"
+fi
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-ROOTFS_IMG="ubuntu26_${DESKTOP_ENV}_${TIMESTAMP}.img"
+ROOTFS_IMG="ubuntu26_${DESKTOP_ENV}_${IMG_SUFFIX}_${TIMESTAMP}.img"
 
-echo "开始构建 Ubuntu 26.04 | 桌面: $DESKTOP_ENV | 用户: $CUSTOM_USER"
+echo "开始构建 Ubuntu 26.04 | 桌面: $DESKTOP_ENV | 模式: $BOOT_MODE | 用户: $CUSTOM_USER"
 
 rm -rf rootdir || true
 truncate -s $IMAGE_SIZE "$ROOTFS_IMG"
@@ -41,7 +51,7 @@ printf "deb %s %s-updates main restricted universe multiverse\n" "$UBUNTU_MIRROR
 printf "deb %s %s-security main restricted universe multiverse\n" "$UBUNTU_MIRROR" "$UBUNTU_SUITE" >> rootdir/etc/apt/sources.list
 
 chroot rootdir apt update
-# ✅ 确保包含 openssh-server 并强制启用
+# ✅ 确保包含 openssh-server
 chroot rootdir apt install -y --no-install-recommends \
     systemd sudo vim-tiny wget curl network-manager openssh-server \
     wpasupplicant dbus kmod initramfs-tools
@@ -77,6 +87,7 @@ chroot rootdir usermod -aG sudo,audio,video,render,input,plugdev "$CUSTOM_USER"
 
 chroot rootdir bash -c "echo 'ttyMSM0' >> /etc/securetty"
 ln -sf /lib/systemd/system/getty@.service rootdir/etc/systemd/system/getty.target.wants/getty@ttyMSM0.service
+# ✅ 强制启用 SSH
 chroot rootdir systemctl enable systemd-resolved ssh
 ln -sf /run/systemd/resolve/stub-resolv.conf rootdir/etc/resolv.conf
 
@@ -106,7 +117,9 @@ if [ "$DM" = "lightdm" ]; then
 fi
 
 chroot rootdir systemctl set-default graphical.target
-printf "PARTLABEL=linux / ext4 defaults,noatime,errors=remount-ro 0 1\n" > rootdir/etc/fstab
+
+# ✅ 写入单/双系统对应的 fstab
+printf "PARTLABEL=%s / ext4 defaults,noatime,errors=remount-ro 0 1\n" "$ROOT_PART" > rootdir/etc/fstab
 
 chroot rootdir apt clean
 chroot rootdir rm -rf /tmp/*.deb
@@ -121,5 +134,5 @@ rm -rf rootdir
 tune2fs -U $FILESYSTEM_UUID "$ROOTFS_IMG"
 SPARSE_IMG="sparse_${ROOTFS_IMG}"
 img2simg "$ROOTFS_IMG" "$SPARSE_IMG"
-7z a "ubuntu26_${DESKTOP_ENV}_${TIMESTAMP}.7z" "$SPARSE_IMG"
+7z a "ubuntu26_${DESKTOP_ENV}_${IMG_SUFFIX}_${TIMESTAMP}.7z" "$SPARSE_IMG"
 rm -f "$ROOTFS_IMG" "$SPARSE_IMG"
